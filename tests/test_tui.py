@@ -626,13 +626,47 @@ class TestUsageRows:
         assert "(!)" in row[2]
         assert row[4] == pytest.approx(100.0 / 7, abs=0.5)
 
-    def test_expected_pct_suppressed_right_after_reset(self):
+    def test_expected_pct_present_right_after_reset_without_marker(self):
+        # 1h into the week: the "(ahead of pace)" verdict stays suppressed,
+        # but the tick's position is known — ~0.6% — and is reported.
         from claude_swap.tui.widgets import usage_rows
 
         now = time.time()
-        last_good = {"seven_day": {"pct": 5.0, "resets_at": _iso_in(86400 * 7 - 3600)}}
+        last_good = {"seven_day": {"pct": 50.0, "resets_at": _iso_in(86400 * 7 - 3600)}}
         row = usage_rows(last_good, now, now)[0]
-        assert row[4] is None
+        assert "pace" not in row[2]
+        assert row[4] == pytest.approx(100.0 / (24 * 7), abs=0.1)
+
+
+    def test_card_shows_clock_only_where_it_fits(self):
+        # Per-row degradation: the wide card shows every clock, a mid width
+        # keeps 5h/7d clocks while the longer spend row falls back to its
+        # countdown, and a narrow card is exactly the old countdown-only look.
+        from claude_swap.tui.widgets import account_card_text
+
+        entry = make_entry(
+            spend={
+                "used": 12.5,
+                "limit": 50.0,
+                "pct": 25.0,
+                "currency": "USD",
+                "resets_at": _iso_in(7200),
+            }
+        )
+        acc = make_account(1, active=True, entry=entry)
+
+        wide = account_card_text(acc, 100).plain
+        assert wide.count(" · ") == 3
+
+        mid_lines = account_card_text(acc, 78).plain.splitlines()
+        spend_line = next(line for line in mid_lines if "$12.50" in line)
+        assert " · " not in spend_line
+        for line in mid_lines:
+            if "resets" in line and "$12.50" not in line:
+                assert " · " in line
+
+        narrow = account_card_text(acc, 40).plain
+        assert " · " not in narrow
 
 
 class TestBarCells:
@@ -682,35 +716,29 @@ class TestBarCells:
         assert styles[5] == palette.muted
         assert styles[18] == palette.sev_warn
 
-    def test_card_shows_clock_only_where_it_fits(self):
-        # Per-row degradation: the wide card shows every clock, a mid width
-        # keeps 5h/7d clocks while the longer spend row falls back to its
-        # countdown, and a narrow card is exactly the old countdown-only look.
+    def test_no_tick_when_pct_unknown(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        assert "╎" not in bar_cells(None, 20, expected=50.0).plain
+
+    def test_pace_tick_clamps_to_bar_edges(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        assert bar_cells(50.0, 20, expected=0.0).plain[0] == "╎"
+        assert bar_cells(50.0, 20, expected=100.0).plain[19] == "╎"
+
+    def test_card_wires_expected_pct_into_weekly_bars_only(self):
+        # The 7d row shows the tick; the 5h row, with no pace, does not.
         from claude_swap.tui.widgets import account_card_text
 
-        entry = make_entry(
-            spend={
-                "used": 12.5,
-                "limit": 50.0,
-                "pct": 25.0,
-                "currency": "USD",
-                "resets_at": _iso_in(7200),
-            }
-        )
-        acc = make_account(1, active=True, entry=entry)
-
-        wide = account_card_text(acc, 100).plain
-        assert wide.count(" · ") == 3
-
-        mid_lines = account_card_text(acc, 78).plain.splitlines()
-        spend_line = next(line for line in mid_lines if "$12.50" in line)
-        assert " · " not in spend_line
-        for line in mid_lines:
-            if "resets" in line and "$12.50" not in line:
-                assert " · " in line
-
-        narrow = account_card_text(acc, 40).plain
-        assert " · " not in narrow
+        now = time.time()
+        entry = make_entry(pct5=47.0, pct7=50.0)
+        entry.last_good["seven_day"]["resets_at"] = _iso_in(86400 * 6)
+        lines = account_card_text(make_account(1, entry=entry), 100, now=now).plain.splitlines()
+        row5 = next(line for line in lines if line.strip().startswith("5h"))
+        row7 = next(line for line in lines if line.strip().startswith("7d"))
+        assert "╎" not in row5
+        assert "╎" in row7
 
 
 class TestMiniAccountText:

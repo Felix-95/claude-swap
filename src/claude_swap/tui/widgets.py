@@ -125,14 +125,19 @@ def _reset_parts(window: dict, now: float) -> tuple[str | None, str | None]:
 def _pace_parts(window: dict, fetched_at: float | None) -> tuple[str, float | None]:
     """``("(ahead of pace)" or "", expected_pct or None)`` for a weekly window.
 
-    The suffix fires only when meaningfully ahead; the expected percentage is
-    present whenever pace is computable at all, so the bar can draw its tick
-    on on-track and behind-pace rows too.
+    The suffix keeps its gates: meaningfully ahead, and not within
+    ``pace.SUPPRESS_AFTER_RESET_S`` of a reset. The expected percentage skips
+    that suppression — it exists because "ahead" is a false positive while
+    expected is near zero, but the tick is a position, not a verdict, and a
+    bar with no tick reads as "pace unknown" rather than "early". Both are
+    None together only when pace is not computable at all (no ``fetched_at``
+    or ``resets_at``).
     """
-    result = pace.compute_pace(window, fetched_at=fetched_at)
-    if result is None:
+    marker = pace.compute_pace(window, fetched_at=fetched_at)
+    position = pace.compute_pace(window, fetched_at=fetched_at, suppress_after_reset_s=0.0)
+    if position is None:
         return "", None
-    return ("(ahead of pace)" if result.ahead else ""), result.expected_pct
+    return ("(ahead of pace)" if marker and marker.ahead else ""), position.expected_pct
 
 
 def usage_rows(
@@ -150,7 +155,7 @@ def usage_rows(
     rows also carry a "(ahead of pace)" marker when meaningfully ahead of the
     week's expected usage (issue #125) — never the 5h row. ``expected_pct``
     is where on-schedule usage would sit for those same rows (the bar's pace
-    tick, issue #228) and None for spend, 5h, and the first day after a reset.
+    tick, issue #228) and None for spend and 5h.
     """
     if not isinstance(last_good, dict):
         return []
