@@ -593,6 +593,94 @@ class TestUsageRows:
         last_good = {"seven_day": {"pct": 50.0, "resets_at": _iso_in(86400 * 6)}}
         row = usage_rows(last_good, now)[0]
         assert "pace" not in row[2]
+        assert row[4] is None
+
+    def test_seven_day_row_carries_expected_pct(self):
+        # 1 day of 7 elapsed -> on-schedule usage sits at ~14%, regardless
+        # of whether the actual pct is ahead, on track, or behind.
+        from claude_swap.tui.widgets import usage_rows
+
+        now = time.time()
+        for pct in (50.0, 14.0, 2.0):
+            last_good = {"seven_day": {"pct": pct, "resets_at": _iso_in(86400 * 6)}}
+            row = usage_rows(last_good, now, now)[0]
+            assert row[4] == pytest.approx(100.0 / 7, abs=0.5)
+
+    def test_five_hour_and_spend_rows_have_no_expected_pct(self):
+        from claude_swap.tui.widgets import usage_rows
+
+        now = time.time()
+        last_good = {
+            "spend": {"used": 1.0, "limit": 10.0, "pct": 10.0, "currency": "USD"},
+            "five_hour": {"pct": 90.0, "resets_at": _iso_in(3600 * 4)},
+        }
+        rows = usage_rows(last_good, now, now)
+        assert [row[4] for row in rows] == [None, None]
+
+    def test_maxed_scoped_row_keeps_expected_pct(self):
+        from claude_swap.tui.widgets import usage_rows
+
+        now = time.time()
+        last_good = {"scoped": [{"name": "Fable", "pct": 100.0, "resets_at": _iso_in(86400 * 6)}]}
+        row = usage_rows(last_good, now, now)[0]
+        assert "(!)" in row[2]
+        assert row[4] == pytest.approx(100.0 / 7, abs=0.5)
+
+    def test_expected_pct_suppressed_right_after_reset(self):
+        from claude_swap.tui.widgets import usage_rows
+
+        now = time.time()
+        last_good = {"seven_day": {"pct": 5.0, "resets_at": _iso_in(86400 * 7 - 3600)}}
+        row = usage_rows(last_good, now, now)[0]
+        assert row[4] is None
+
+
+class TestBarCells:
+    """The pace tick on the bar glyphs (issue #228)."""
+
+    def test_pace_tick_sits_at_expected_position(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        plain = bar_cells(50.0, 20, expected=25.0).plain
+        assert plain[5] == "╎"
+        assert plain.count("╎") == 1
+        assert plain[:5] == "━" * 5 and plain[6:10] == "━" * 4
+
+    def test_pace_tick_shows_in_track_when_behind(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        plain = bar_cells(10.0, 20, expected=50.0).plain
+        assert plain[10] == "╎"
+        assert plain[:2] == "━━"
+
+    def test_no_pace_tick_without_expected(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        assert "╎" not in bar_cells(50.0, 20, threshold=90.0).plain
+
+    def test_threshold_tick_wins_over_pace_tick(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        plain = bar_cells(50.0, 20, threshold=90.0, expected=90.0).plain
+        assert plain[18] == "┃"
+        assert "╎" not in plain
+
+    def test_both_ticks_render_side_by_side(self):
+        from claude_swap.tui.widgets import bar_cells
+
+        plain = bar_cells(47.0, 20, threshold=90.0, expected=32.0).plain
+        assert plain[6] == "╎"
+        assert plain[18] == "┃"
+
+    def test_pace_tick_is_dim_not_warn(self):
+        from claude_swap.tui.theme import Palette
+        from claude_swap.tui.widgets import bar_cells
+
+        palette = Palette.DARK
+        spans = bar_cells(50.0, 20, threshold=90.0, expected=25.0, palette=palette).spans
+        styles = {span.start: str(span.style) for span in spans}
+        assert styles[5] == palette.muted
+        assert styles[18] == palette.sev_warn
 
     def test_card_shows_clock_only_where_it_fits(self):
         # Per-row degradation: the wide card shows every clock, a mid width
